@@ -3,7 +3,7 @@
   "name": "Shutterfly Address Book Exporter",
   "version": "1.0",
   "description": "Export your Shutterfly address book to a CSV file.",
-  "permissions": ["webRequest", "tabs", "downloads"],
+  "permissions": ["webRequest", "downloads"],
   "host_permissions": [
     "https://www.shutterfly.com/*",
     "https://api2.shutterfly.com/*"
