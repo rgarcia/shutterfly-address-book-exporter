@@ -2,7 +2,6 @@ const Papa = require('papaparse');
 const { flatten } = require('flat');
 
 function convertToCSV(data) {
-  // Use PapaParse to convert data to CSV
   return Papa.unparse(data);
 }
 let isListeningForAddressBook = false;
@@ -28,7 +27,7 @@ function downloadCSV(csvContent, fileName) {
 
 chrome.webRequest.onBeforeSendHeaders.addListener(
   function (details) {
-    if (isListeningForAddressBook && details.method === 'GET' && details.url.includes('https://api2.shutterfly.com/v1/addressbook/') && details.url.includes('/contacts')) {
+    if (isListeningForAddressBook && details.method === 'GET' && details.url.includes('https://api2.shutterfly.com/v1/addressbook/') && details.url.includes('/contacts?')) {
       let headers = {};
       for (let header of details.requestHeaders) {
         headers[header.name] = header.value;
