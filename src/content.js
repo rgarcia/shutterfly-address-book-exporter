@@ -6,43 +6,40 @@ function injectExportButton() {
   </a>
 </div>`;
   function insert() {
-    const deleteDiv = document.querySelector('div.delete');
+    const deleteDiv = document.querySelector("div.delete");
     if (!deleteDiv) {
       return;
     }
     // Create a container for the new HTML
-    const container = document.createElement('div');
+    const container = document.createElement("div");
     container.innerHTML = exportHtml;
 
     // Insert the new HTML after the delete div
     deleteDiv.parentNode.insertBefore(container, deleteDiv.nextSibling);
 
-    const exportButton = container.querySelector('.export');
-    exportButton.addEventListener('click', function () {
-      // Send a message to the background script to start the data fetching process
-      chrome.runtime.sendMessage({ action: 'exportAddressBook' });
-      
+    const exportButton = container.querySelector(".export");
+    exportButton.addEventListener("click", function () {
+      // Send a message to the background script
+      chrome.runtime.sendMessage({ action: "exportAddressBook" });
       // Reload the current tab
       window.location.reload();
     });
   }
- 
+
   const observer = new MutationObserver((mutations, obs) => {
-    const importDiv = document.querySelector('.import');
+    const importDiv = document.querySelector("div.delete");
     if (importDiv) {
       insert();
       obs.disconnect(); // Stop watching for changes
     }
   });
-  
+
   observer.observe(document.body, {
     childList: true,
-    subtree: true
+    subtree: true,
   });
 }
-  
 
-// Inject the button when the DOM is fully loaded
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", injectExportButton);
 } else {
