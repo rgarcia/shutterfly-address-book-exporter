@@ -40,6 +40,7 @@ function createExportButton() {
   button.id = EXPORT_BUTTON_ID;
   button.type = "button";
   button.className = "sfs-button sfs-button--primary compact";
+  button.style.marginBottom = "0";
   button.setAttribute("aria-label", "Export contacts as CSV");
 
   const content = document.createElement("span");
