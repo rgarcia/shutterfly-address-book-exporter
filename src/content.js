@@ -10,18 +10,18 @@ function removeExportButton() {
 }
 
 function startExport(button) {
-  if (button.getAttribute("aria-disabled") === "true") {
+  if (button.getAttribute("aria-busy") === "true") {
     return;
   }
 
   const content = button.querySelector(".sfs-button--content");
   const reset = () => {
-    button.removeAttribute("aria-disabled");
+    button.removeAttribute("aria-busy");
     button.style.pointerEvents = "";
     content.textContent = "Export contacts";
   };
 
-  button.setAttribute("aria-disabled", "true");
+  button.setAttribute("aria-busy", "true");
   button.style.pointerEvents = "none";
   content.textContent = "Exporting…";
 
