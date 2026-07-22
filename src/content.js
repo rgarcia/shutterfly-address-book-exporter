@@ -1,47 +1,94 @@
-function injectExportButton() {
-  const exportHtml = `<div class="toolBarUnits null delete export" tabindex="0">
-  <svg class="iconImport uig-svg-icon" viewBox="0 0 22 20"><g id="icons/photos/uploads/import@1x-Page-1-37752" fill="none" fill-rule="evenodd"><g id="icons/photos/uploads/import@1x-Address-book-assets-37752" transform="translate(-116 -184)"><g id="icons/photos/uploads/import@1x-SVG-37752" transform="translate(116 57)"><g id="icons/photos/uploads/import@1x-icons/photos/uploads/import-37752" transform="translate(0 126)"><mask id="icons/photos/uploads/import@1x-mask-2-37752" fill="#fff"><path d="M7 5a1 1 0 1 1 0 2H2v12h18V7h-5a1 1 0 0 1 0-2h6a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6zm4-4a1 1 0 0 1 1 1v7.59l1.29-1.3a1.004 1.004 0 0 1 1.42 1.42l-3 3a1.26 1.26 0 0 1-.32.21.37.37 0 0 1-.14 0 .8.8 0 0 1-.5 0 .37.37 0 0 1-.14 0 1.26 1.26 0 0 1-.32-.21l-3-3a1.004 1.004 0 0 1 1.42-1.42L10 9.59V2a1 1 0 0 1 1-1z" id="icons/photos/uploads/import@1x-path-1-0-37752"></path></mask><path d="M7 5a1 1 0 1 1 0 2H2v12h18V7h-5a1 1 0 0 1 0-2h6a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6zm4-4a1 1 0 0 1 1 1v7.59l1.29-1.3a1.004 1.004 0 0 1 1.42 1.42l-3 3a1.26 1.26 0 0 1-.32.21.37.37 0 0 1-.14 0 .8.8 0 0 1-.5 0 .37.37 0 0 1-.14 0 1.26 1.26 0 0 1-.32-.21l-3-3a1.004 1.004 0 0 1 1.42-1.42L10 9.59V2a1 1 0 0 1 1-1z" id="icons/photos/uploads/import@1x-path-1-1-37752" fill="#000"></path></g></g></g></g><!-- Filename: sourceSvg/addressbook/import.svg --></svg>
-  <a class="unitLabel labelHover">
-    <span>Export contacts</span>
-  </a>
-</div>`;
-  function insert() {
-    const deleteDiv = document.querySelector("div.delete");
-    if (!deleteDiv) {
+const EXPORT_BUTTON_ID = "shutterfly-address-book-export";
+const EXPORT_CONTAINER_CLASS = "shutterfly-address-book-export-container";
+
+function isAddressBookPage() {
+  return location.hash.startsWith("#addressbook");
+}
+
+function removeExportButton() {
+  document.querySelector(`.${EXPORT_CONTAINER_CLASS}`)?.remove();
+}
+
+function startExport(button) {
+  button.setAttribute("aria-disabled", "true");
+  button.style.pointerEvents = "none";
+
+  chrome.runtime.sendMessage({ action: "exportAddressBook" }, (response) => {
+    if (chrome.runtime.lastError || !response?.accepted) {
+      button.removeAttribute("aria-disabled");
+      button.style.pointerEvents = "";
+      console.error(
+        "Unable to start the address book export:",
+        chrome.runtime.lastError?.message || response?.error,
+      );
       return;
     }
-    // Create a container for the new HTML
-    const container = document.createElement("div");
-    container.innerHTML = exportHtml;
 
-    // Insert the new HTML after the delete div
-    deleteDiv.parentNode.insertBefore(container, deleteDiv.nextSibling);
+    window.location.reload();
+  });
+}
 
-    const exportButton = container.querySelector(".export");
-    exportButton.addEventListener("click", function () {
-      // Send a message to the background script
-      chrome.runtime.sendMessage({ action: "exportAddressBook" });
-      // Reload the current tab
-      window.location.reload();
-    });
-  }
+function createExportButton() {
+  const container = document.createElement("div");
+  container.className = `dropdown_container addContactButtonContainer ${EXPORT_CONTAINER_CLASS}`;
 
-  const observer = new MutationObserver((mutations, obs) => {
-    const importDiv = document.querySelector("div.delete");
-    if (importDiv) {
-      insert();
-      obs.disconnect(); // Stop watching for changes
+  const button = document.createElement("a");
+  button.id = EXPORT_BUTTON_ID;
+  button.className = "sfs-button sfs-button--primary compact";
+  button.setAttribute("aria-label", "Export contacts as CSV");
+  button.setAttribute("role", "button");
+  button.setAttribute("tabindex", "0");
+
+  const content = document.createElement("span");
+  content.className = "sfs-button--content";
+  content.textContent = "Export contacts";
+  button.append(content);
+
+  button.addEventListener("click", () => startExport(button));
+  button.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      startExport(button);
     }
   });
 
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
+  container.append(button);
+  return container;
+}
+
+function syncExportButton() {
+  if (!isAddressBookPage()) {
+    removeExportButton();
+    return;
+  }
+
+  if (document.getElementById(EXPORT_BUTTON_ID)) {
+    return;
+  }
+
+  const addContactButton = document.getElementById("addNewAddressButton");
+  const addContactContainer = addContactButton?.parentElement;
+  if (!addContactContainer) {
+    return;
+  }
+
+  addContactContainer.before(createExportButton());
+}
+
+let syncScheduled = false;
+function scheduleSync() {
+  if (syncScheduled) {
+    return;
+  }
+
+  syncScheduled = true;
+  requestAnimationFrame(() => {
+    syncScheduled = false;
+    syncExportButton();
   });
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", injectExportButton);
-} else {
-  injectExportButton();
-}
+const observer = new MutationObserver(scheduleSync);
+observer.observe(document.documentElement, { childList: true, subtree: true });
+window.addEventListener("hashchange", scheduleSync);
+scheduleSync();

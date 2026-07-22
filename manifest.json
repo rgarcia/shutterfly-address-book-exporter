@@ -1,19 +1,19 @@
 {
   "manifest_version": 3,
   "name": "Shutterfly Address Book Exporter",
-  "version": "1.2",
+  "version": "1.3",
   "description": "Export your Shutterfly address book to a CSV file.",
-  "permissions": ["webRequest", "downloads"],
+  "permissions": ["webRequest", "downloads", "storage"],
   "host_permissions": [
-    "https://www.shutterfly.com/*",
-    "https://api2.shutterfly.com/*"
+    "https://accounts.shutterfly.com/*",
+    "https://accounts-api3.shutterfly.com/*"
   ],
   "background": {
     "service_worker": "dist/background.bundle.js"
   },
   "content_scripts": [
     {
-      "matches": ["https://www.shutterfly.com/addressbook/management.sfly*"],
+      "matches": ["https://accounts.shutterfly.com/account-settings*"],
       "js": ["dist/content.bundle.js"]
     }
   ],
