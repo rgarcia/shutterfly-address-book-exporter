@@ -1,12 +1,11 @@
-const {
-  findAddressBookAddContactContainer,
-} = require("./content-target");
-
 const EXPORT_BUTTON_ID = "shutterfly-address-book-export";
 const EXPORT_CONTAINER_CLASS = "shutterfly-address-book-export-container";
 
-function removeExportButton() {
-  document.querySelector(`.${EXPORT_CONTAINER_CLASS}`)?.remove();
+function findAddContactContainer() {
+  const addContactButton = document.getElementById("addNewAddressButton");
+  return addContactButton?.closest(".addressbookContainer")
+    ? addContactButton.parentElement
+    : null;
 }
 
 function startExport(button) {
@@ -15,28 +14,21 @@ function startExport(button) {
   }
 
   const content = button.querySelector(".sfs-button--content");
-  const reset = () => {
-    button.removeAttribute("aria-busy");
-    button.style.pointerEvents = "";
-    content.textContent = "Export contacts";
-  };
-
   button.setAttribute("aria-busy", "true");
-  button.style.pointerEvents = "none";
   content.textContent = "Exporting…";
 
   chrome.runtime.sendMessage({ action: "exportAddressBook" }, (response) => {
-    if (chrome.runtime.lastError || !response?.accepted) {
-      reset();
-      console.error(
-        "Unable to export the address book:",
-        chrome.runtime.lastError?.message || response?.error,
-      );
+    button.removeAttribute("aria-busy");
+
+    if (chrome.runtime.lastError || !response?.ok) {
+      content.textContent = "Reload address book and retry";
       return;
     }
 
     content.textContent = "Downloaded";
-    window.setTimeout(reset, 2000);
+    window.setTimeout(() => {
+      content.textContent = "Export contacts";
+    }, 2000);
   });
 }
 
@@ -44,42 +36,31 @@ function createExportButton() {
   const container = document.createElement("div");
   container.className = `dropdown_container addContactButtonContainer ${EXPORT_CONTAINER_CLASS}`;
 
-  const button = document.createElement("a");
+  const button = document.createElement("button");
   button.id = EXPORT_BUTTON_ID;
+  button.type = "button";
   button.className = "sfs-button sfs-button--primary compact";
   button.setAttribute("aria-label", "Export contacts as CSV");
-  button.setAttribute("role", "button");
-  button.setAttribute("tabindex", "0");
 
   const content = document.createElement("span");
   content.className = "sfs-button--content";
   content.textContent = "Export contacts";
   button.append(content);
-
   button.addEventListener("click", () => startExport(button));
-  button.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      startExport(button);
-    }
-  });
 
   container.append(button);
   return container;
 }
 
 function syncExportButton() {
-  const addContactContainer = findAddressBookAddContactContainer(document);
+  const addContactContainer = findAddContactContainer();
+  const exportContainer = document.querySelector(`.${EXPORT_CONTAINER_CLASS}`);
+
   if (!addContactContainer) {
-    removeExportButton();
-    return;
+    exportContainer?.remove();
+  } else if (!document.getElementById(EXPORT_BUTTON_ID)) {
+    addContactContainer.before(createExportButton());
   }
-
-  if (document.getElementById(EXPORT_BUTTON_ID)) {
-    return;
-  }
-
-  addContactContainer.before(createExportButton());
 }
 
 let syncScheduled = false;
@@ -95,7 +76,8 @@ function scheduleSync() {
   });
 }
 
-const observer = new MutationObserver(scheduleSync);
-observer.observe(document.documentElement, { childList: true, subtree: true });
-window.addEventListener("hashchange", scheduleSync);
+new MutationObserver(scheduleSync).observe(document.documentElement, {
+  childList: true,
+  subtree: true,
+});
 scheduleSync();

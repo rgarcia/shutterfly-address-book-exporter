@@ -1,22 +1,11 @@
 const {
   convertToCSV,
   fetchAllContacts,
+  getReplayHeaders,
   isAddressListUrl,
 } = require("./address-book");
 
-const FETCH_HEADER_NAMES = new Set([
-  "accept",
-  "accountid",
-  "authorization",
-  "gsid",
-  "noodle",
-  "sfly-transactionid",
-  "x-api-key",
-]);
 const REQUEST_CACHE_PREFIX = "addressBookRequest:";
-const REQUEST_CACHE_TTL_MS = 60 * 60 * 1000;
-
-const activeExports = new Set();
 
 function requestCacheKey(tabId) {
   return `${REQUEST_CACHE_PREFIX}${tabId}`;
@@ -28,54 +17,49 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (sender.tab?.id == null) {
-    sendResponse({ accepted: false, error: "The Shutterfly tab was not found." });
+    sendResponse({ error: "Reload the address book and try again." });
     return;
   }
 
-  const tabId = sender.tab.id;
-  if (activeExports.has(tabId)) {
-    sendResponse({ accepted: false, error: "An export is already in progress." });
-    return;
-  }
-
-  activeExports.add(tabId);
-  exportCachedAddressBook(tabId)
-    .then(() => sendResponse({ accepted: true }))
+  exportCachedAddressBook(sender.tab.id)
+    .then(() => sendResponse({ ok: true }))
     .catch((error) => {
       console.error("Unable to export the Shutterfly address book:", error);
-      sendResponse({ accepted: false, error: error.message });
-    })
-    .finally(() => activeExports.delete(tabId));
+      sendResponse({ error: "Reload the address book and try again." });
+    });
 
   return true;
 });
-
-function getFetchHeaders(requestHeaders = []) {
-  return Object.fromEntries(
-    requestHeaders
-      .filter(({ name, value }) =>
-        value != null && FETCH_HEADER_NAMES.has(name.toLowerCase()),
-      )
-      .map(({ name, value }) => [name, value]),
-  );
-}
 
 async function downloadCSV(csvContent) {
   const url = `data:text/csv;charset=utf-8,${encodeURIComponent(csvContent)}`;
 
   await new Promise((resolve, reject) => {
+    let downloadId;
+    const finish = (error) => {
+      chrome.downloads.onChanged.removeListener(onChanged);
+      error ? reject(error) : resolve();
+    };
+    const onChanged = (change) => {
+      if (change.id !== downloadId || !change.state) {
+        return;
+      }
+      finish(
+        change.state.current === "complete"
+          ? null
+          : new Error(change.error?.current || "Download interrupted"),
+      );
+    };
+
+    chrome.downloads.onChanged.addListener(onChanged);
     chrome.downloads.download(
-      {
-        url,
-        filename: "addressbook.csv",
-        saveAs: false,
-      },
-      (downloadId) => {
+      { url, filename: "addressbook.csv", saveAs: false },
+      (id) => {
         if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
+          finish(new Error(chrome.runtime.lastError.message));
           return;
         }
-        resolve(downloadId);
+        downloadId = id;
       },
     );
   });
@@ -86,17 +70,11 @@ async function exportCachedAddressBook(tabId) {
   const stored = await chrome.storage.session.get(key);
   const cachedRequest = stored[key];
 
-  if (
-    !cachedRequest ||
-    cachedRequest.capturedAt + REQUEST_CACHE_TTL_MS < Date.now()
-  ) {
-    throw new Error("Reload the address book page, then try exporting again.");
+  if (!cachedRequest) {
+    throw new Error("No address book request has been captured");
   }
 
-  const contacts = await fetchAllContacts(
-    cachedRequest.url,
-    cachedRequest.headers,
-  );
+  const contacts = await fetchAllContacts(cachedRequest.url, cachedRequest.headers);
   await downloadCSV(convertToCSV(contacts));
 }
 
@@ -111,8 +89,7 @@ async function cacheAddressListRequest(details) {
 
   await chrome.storage.session.set({
     [requestCacheKey(details.tabId)]: {
-      capturedAt: Date.now(),
-      headers: getFetchHeaders(details.requestHeaders),
+      headers: getReplayHeaders(details.requestHeaders),
       url: details.url,
     },
   });

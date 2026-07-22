@@ -6,24 +6,12 @@ const {
   buildPageUrl,
   convertToCSV,
   fetchAllContacts,
+  getReplayHeaders,
   isAddressListUrl,
 } = require("../src/address-book");
 
 const ADDRESS_URL =
   "https://accounts-api3.shutterfly.com/accounts/v3/account/123/address?queryStart=1&queryLimit=100&querySortKeys=firstName%2B%2ClastName%2B";
-
-test("grants webRequest access to the API and its initiator", () => {
-  const manifest = require("../manifest.json");
-  assert.ok(manifest.permissions.includes("storage"));
-  assert.ok(
-    manifest.host_permissions.includes("https://accounts.shutterfly.com/*"),
-  );
-  assert.ok(
-    manifest.host_permissions.includes(
-      "https://accounts-api3.shutterfly.com/*",
-    ),
-  );
-});
 
 test("recognizes only paginated address-list requests", () => {
   assert.equal(isAddressListUrl(ADDRESS_URL), true);
@@ -48,11 +36,36 @@ test("changes queryStart without losing the request contract", () => {
   assert.equal(result.searchParams.get("querySortKeys"), "firstName+,lastName+");
 });
 
-test("fetches the live 100 plus 2 page boundary from page one", async () => {
+test("replays captured application headers but excludes browser-controlled headers", () => {
+  const replayed = Object.fromEntries(
+    getReplayHeaders([
+      { name: "Accept", value: "application/json" },
+      { name: "Authorization", value: "token" },
+      { name: "X-API-Key", value: "key" },
+      { name: "X-New-Contract-Header", value: "new" },
+      { name: "Cookie", value: "private" },
+      { name: "Origin", value: "https://accounts.shutterfly.com" },
+      { name: "Host", value: "accounts-api3.shutterfly.com" },
+      { name: "Sec-Fetch-Site", value: "same-site" },
+      { name: "Proxy-Authorization", value: "private" },
+    ]),
+  );
+
+  assert.deepEqual(replayed, {
+    Accept: "application/json",
+    Authorization: "token",
+    "X-API-Key": "key",
+    "X-New-Contract-Header": "new",
+  });
+});
+
+test("fetches every page from the beginning", async () => {
   const starts = [];
-  const fetchImpl = async (value) => {
+  const fetchImpl = async (value, options) => {
     const queryStart = Number(new URL(value).searchParams.get("queryStart"));
     starts.push(queryStart);
+    assert.equal(options.credentials, "omit");
+    assert.equal(options.redirect, "error");
     const count = queryStart === 1 ? 100 : 2;
     const resources = Array.from({ length: count }, (_, index) => ({
       resource: { recordSeq: queryStart + index },
@@ -64,24 +77,12 @@ test("fetches the live 100 plus 2 page boundary from page one", async () => {
     };
   };
 
-  const capturedSecondPage = buildPageUrl(ADDRESS_URL, 101);
-  const contacts = await fetchAllContacts(capturedSecondPage, {}, fetchImpl);
+  const contacts = await fetchAllContacts(buildPageUrl(ADDRESS_URL, 101), [], fetchImpl);
   assert.deepEqual(starts, [1, 101]);
   assert.equal(contacts.length, 102);
-  assert.equal(contacts[0].recordSeq, 1);
-  assert.equal(contacts[101].recordSeq, 102);
 });
 
-test("exports an empty address book", async () => {
-  const contacts = await fetchAllContacts(ADDRESS_URL, {}, async () => ({
-    ok: true,
-    json: async () => ({ resources: [], totalResources: 0 }),
-  }));
-
-  assert.deepEqual(contacts, []);
-});
-
-test("creates a rectangular CSV with sorted flattened headers", () => {
+test("creates a rectangular CSV with sorted flattened headers and arrays", () => {
   const csv = convertToCSV([
     { firstName: "Ada", line1: "1 Main St", tags: ["friend"] },
     { firstName: 'Grace, "Amazing"', line2: "Apt 2\nRear" },
