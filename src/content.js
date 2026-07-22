@@ -1,9 +1,9 @@
+const {
+  findAddressBookAddContactContainer,
+} = require("./content-target");
+
 const EXPORT_BUTTON_ID = "shutterfly-address-book-export";
 const EXPORT_CONTAINER_CLASS = "shutterfly-address-book-export-container";
-
-function isAddressBookPage() {
-  return location.hash.startsWith("#addressbook");
-}
 
 function removeExportButton() {
   document.querySelector(`.${EXPORT_CONTAINER_CLASS}`)?.remove();
@@ -57,18 +57,13 @@ function createExportButton() {
 }
 
 function syncExportButton() {
-  if (!isAddressBookPage()) {
+  const addContactContainer = findAddressBookAddContactContainer(document);
+  if (!addContactContainer) {
     removeExportButton();
     return;
   }
 
   if (document.getElementById(EXPORT_BUTTON_ID)) {
-    return;
-  }
-
-  const addContactButton = document.getElementById("addNewAddressButton");
-  const addContactContainer = addContactButton?.parentElement;
-  if (!addContactContainer) {
     return;
   }
 
