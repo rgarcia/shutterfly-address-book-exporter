@@ -10,21 +10,33 @@ function removeExportButton() {
 }
 
 function startExport(button) {
+  if (button.getAttribute("aria-disabled") === "true") {
+    return;
+  }
+
+  const content = button.querySelector(".sfs-button--content");
+  const reset = () => {
+    button.removeAttribute("aria-disabled");
+    button.style.pointerEvents = "";
+    content.textContent = "Export contacts";
+  };
+
   button.setAttribute("aria-disabled", "true");
   button.style.pointerEvents = "none";
+  content.textContent = "Exporting…";
 
   chrome.runtime.sendMessage({ action: "exportAddressBook" }, (response) => {
     if (chrome.runtime.lastError || !response?.accepted) {
-      button.removeAttribute("aria-disabled");
-      button.style.pointerEvents = "";
+      reset();
       console.error(
-        "Unable to start the address book export:",
+        "Unable to export the address book:",
         chrome.runtime.lastError?.message || response?.error,
       );
       return;
     }
 
-    window.location.reload();
+    content.textContent = "Downloaded";
+    window.setTimeout(reset, 2000);
   });
 }
 

@@ -32,9 +32,6 @@ function createChromeMock(sessionStore) {
         async get(key) {
           return key in sessionStore ? { [key]: sessionStore[key] } : {};
         },
-        async remove(key) {
-          delete sessionStore[key];
-        },
         async set(values) {
           Object.assign(sessionStore, values);
         },
@@ -58,7 +55,7 @@ function loadBackground(mock) {
   require(BACKGROUND_PATH);
 }
 
-function armExport(listener, tabId) {
+function requestExport(listener, tabId) {
   return new Promise((resolve) => {
     const keepAlive = listener(
       { action: "exportAddressBook" },
@@ -79,7 +76,7 @@ async function waitFor(predicate) {
   assert.fail("Timed out waiting for background work");
 }
 
-test("keeps concurrent pending exports tab-scoped across a worker restart", async (t) => {
+test("exports cached requests without navigating or mixing tabs", async (t) => {
   const originalFetch = global.fetch;
   const sessionStore = {};
 
@@ -91,57 +88,90 @@ test("keeps concurrent pending exports tab-scoped across a worker restart", asyn
 
   const firstWorker = createChromeMock(sessionStore);
   loadBackground(firstWorker);
-  await Promise.all([
-    armExport(firstWorker.state.messageListener, 11),
-    armExport(firstWorker.state.messageListener, 22),
-  ]);
-
-  assert.deepEqual(Object.keys(sessionStore).sort(), [
-    "pendingAddressBookExport:11",
-    "pendingAddressBookExport:22",
-  ]);
-
-  global.fetch = async () => ({
-    ok: true,
-    json: async () => ({ resources: [], totalResources: 0 }),
-  });
-
-  const restartedWorker = createChromeMock(sessionStore);
-  loadBackground(restartedWorker);
-  restartedWorker.state.webRequestListener({
+  firstWorker.state.webRequestListener({
     method: "GET",
-    requestHeaders: [],
+    requestHeaders: [{ name: "Authorization", value: "token-11" }],
     tabId: 11,
     url: ADDRESS_URL,
   });
-  restartedWorker.state.webRequestListener({
+  firstWorker.state.webRequestListener({
     method: "GET",
-    requestHeaders: [],
+    requestHeaders: [{ name: "Authorization", value: "token-22" }],
     tabId: 22,
     url: ADDRESS_URL,
   });
 
-  await waitFor(
-    () =>
-      Object.keys(sessionStore).length === 0 &&
-      restartedWorker.state.downloads.length === 2,
-  );
+  await waitFor(() => Object.keys(sessionStore).length === 2);
+  assert.deepEqual(Object.keys(sessionStore).sort(), [
+    "addressBookRequest:11",
+    "addressBookRequest:22",
+  ]);
 
-  await armExport(restartedWorker.state.messageListener, 33);
-  const duplicateRequest = {
-    method: "GET",
-    requestHeaders: [],
-    tabId: 33,
-    url: ADDRESS_URL,
+  const seenTokens = [];
+  global.fetch = async (url, options) => {
+    seenTokens.push(options.headers.Authorization);
+    return {
+      ok: true,
+      json: async () => ({ resources: [], totalResources: 0 }),
+    };
   };
-  restartedWorker.state.webRequestListener(duplicateRequest);
-  restartedWorker.state.webRequestListener(duplicateRequest);
-  await waitFor(
-    () =>
-      Object.keys(sessionStore).length === 0 &&
-      restartedWorker.state.downloads.length === 3,
-  );
-  await new Promise((resolve) => setImmediate(resolve));
 
-  assert.equal(restartedWorker.state.downloads.length, 3);
+  const restartedWorker = createChromeMock(sessionStore);
+  loadBackground(restartedWorker);
+  const responses = await Promise.all([
+    requestExport(restartedWorker.state.messageListener, 11),
+    requestExport(restartedWorker.state.messageListener, 22),
+  ]);
+
+  assert.deepEqual(responses, [{ accepted: true }, { accepted: true }]);
+  assert.deepEqual(seenTokens.sort(), ["token-11", "token-22"]);
+  assert.equal(restartedWorker.state.downloads.length, 2);
+});
+
+test("rejects a duplicate export while the same tab is active", async (t) => {
+  const originalFetch = global.fetch;
+  const sessionStore = {
+    "addressBookRequest:33": {
+      capturedAt: Date.now(),
+      headers: {},
+      url: ADDRESS_URL,
+    },
+  };
+  let finishFetch;
+
+  t.after(() => {
+    global.fetch = originalFetch;
+    delete global.chrome;
+    delete require.cache[BACKGROUND_PATH];
+  });
+
+  global.fetch = () =>
+    new Promise((resolve) => {
+      finishFetch = () =>
+        resolve({
+          ok: true,
+          json: async () => ({ resources: [], totalResources: 0 }),
+        });
+    });
+
+  const worker = createChromeMock(sessionStore);
+  loadBackground(worker);
+  const first = requestExport(worker.state.messageListener, 33);
+  const second = await new Promise((resolve) => {
+    worker.state.messageListener(
+      { action: "exportAddressBook" },
+      { tab: { id: 33 } },
+      resolve,
+    );
+  });
+
+  assert.deepEqual(second, {
+    accepted: false,
+    error: "An export is already in progress.",
+  });
+
+  await waitFor(() => typeof finishFetch === "function");
+  finishFetch();
+  assert.deepEqual(await first, { accepted: true });
+  assert.equal(worker.state.downloads.length, 1);
 });

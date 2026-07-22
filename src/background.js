@@ -13,13 +13,13 @@ const FETCH_HEADER_NAMES = new Set([
   "sfly-transactionid",
   "x-api-key",
 ]);
-const PENDING_EXPORT_PREFIX = "pendingAddressBookExport:";
-const PENDING_EXPORT_TTL_MS = 60_000;
+const REQUEST_CACHE_PREFIX = "addressBookRequest:";
+const REQUEST_CACHE_TTL_MS = 60 * 60 * 1000;
 
 const activeExports = new Set();
 
-function pendingExportKey(tabId) {
-  return `${PENDING_EXPORT_PREFIX}${tabId}`;
+function requestCacheKey(tabId) {
+  return `${REQUEST_CACHE_PREFIX}${tabId}`;
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -38,16 +38,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return;
   }
 
-  chrome.storage.session
-    .set({
-      [pendingExportKey(tabId)]: {
-        expiresAt: Date.now() + PENDING_EXPORT_TTL_MS,
-      },
-    })
+  activeExports.add(tabId);
+  exportCachedAddressBook(tabId)
     .then(() => sendResponse({ accepted: true }))
-    .catch((error) =>
-      sendResponse({ accepted: false, error: error.message }),
-    );
+    .catch((error) => {
+      console.error("Unable to export the Shutterfly address book:", error);
+      sendResponse({ accepted: false, error: error.message });
+    })
+    .finally(() => activeExports.delete(tabId));
 
   return true;
 });
@@ -83,52 +81,47 @@ async function downloadCSV(csvContent) {
   });
 }
 
-async function exportAddressBook(url, requestHeaders, tabId) {
-  try {
-    const contacts = await fetchAllContacts(url, getFetchHeaders(requestHeaders));
-    await downloadCSV(convertToCSV(contacts));
-  } catch (error) {
-    console.error("Unable to export the Shutterfly address book:", error);
-  } finally {
-    activeExports.delete(tabId);
+async function exportCachedAddressBook(tabId) {
+  const key = requestCacheKey(tabId);
+  const stored = await chrome.storage.session.get(key);
+  const cachedRequest = stored[key];
+
+  if (
+    !cachedRequest ||
+    cachedRequest.capturedAt + REQUEST_CACHE_TTL_MS < Date.now()
+  ) {
+    throw new Error("Reload the address book page, then try exporting again.");
   }
+
+  const contacts = await fetchAllContacts(
+    cachedRequest.url,
+    cachedRequest.headers,
+  );
+  await downloadCSV(convertToCSV(contacts));
 }
 
-async function handleAddressListRequest(details) {
+async function cacheAddressListRequest(details) {
   if (
-    activeExports.has(details.tabId) ||
+    details.tabId < 0 ||
     details.method !== "GET" ||
     !isAddressListUrl(details.url)
   ) {
     return;
   }
 
-  const key = pendingExportKey(details.tabId);
-  const stored = await chrome.storage.session.get(key);
-  if (activeExports.has(details.tabId)) {
-    return;
-  }
-
-  const pendingExport = stored[key];
-  if (!pendingExport) {
-    return;
-  }
-
-  if (pendingExport.expiresAt < Date.now()) {
-    await chrome.storage.session.remove(key);
-    return;
-  }
-
-  activeExports.add(details.tabId);
-  await chrome.storage.session.remove(key);
-  await exportAddressBook(details.url, details.requestHeaders, details.tabId);
+  await chrome.storage.session.set({
+    [requestCacheKey(details.tabId)]: {
+      capturedAt: Date.now(),
+      headers: getFetchHeaders(details.requestHeaders),
+      url: details.url,
+    },
+  });
 }
 
 chrome.webRequest.onBeforeSendHeaders.addListener(
   (details) => {
-    void handleAddressListRequest(details).catch((error) => {
-      activeExports.delete(details.tabId);
-      console.error("Unable to start the Shutterfly address book export:", error);
+    void cacheAddressListRequest(details).catch((error) => {
+      console.error("Unable to cache the Shutterfly address book request:", error);
     });
   },
   { urls: ["https://accounts-api3.shutterfly.com/accounts/v3/account/*"] },
