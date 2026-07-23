@@ -1,47 +1,84 @@
-function injectExportButton() {
-  const exportHtml = `<div class="toolBarUnits null delete export" tabindex="0">
-  <svg class="iconImport uig-svg-icon" viewBox="0 0 22 20"><g id="icons/photos/uploads/import@1x-Page-1-37752" fill="none" fill-rule="evenodd"><g id="icons/photos/uploads/import@1x-Address-book-assets-37752" transform="translate(-116 -184)"><g id="icons/photos/uploads/import@1x-SVG-37752" transform="translate(116 57)"><g id="icons/photos/uploads/import@1x-icons/photos/uploads/import-37752" transform="translate(0 126)"><mask id="icons/photos/uploads/import@1x-mask-2-37752" fill="#fff"><path d="M7 5a1 1 0 1 1 0 2H2v12h18V7h-5a1 1 0 0 1 0-2h6a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6zm4-4a1 1 0 0 1 1 1v7.59l1.29-1.3a1.004 1.004 0 0 1 1.42 1.42l-3 3a1.26 1.26 0 0 1-.32.21.37.37 0 0 1-.14 0 .8.8 0 0 1-.5 0 .37.37 0 0 1-.14 0 1.26 1.26 0 0 1-.32-.21l-3-3a1.004 1.004 0 0 1 1.42-1.42L10 9.59V2a1 1 0 0 1 1-1z" id="icons/photos/uploads/import@1x-path-1-0-37752"></path></mask><path d="M7 5a1 1 0 1 1 0 2H2v12h18V7h-5a1 1 0 0 1 0-2h6a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6zm4-4a1 1 0 0 1 1 1v7.59l1.29-1.3a1.004 1.004 0 0 1 1.42 1.42l-3 3a1.26 1.26 0 0 1-.32.21.37.37 0 0 1-.14 0 .8.8 0 0 1-.5 0 .37.37 0 0 1-.14 0 1.26 1.26 0 0 1-.32-.21l-3-3a1.004 1.004 0 0 1 1.42-1.42L10 9.59V2a1 1 0 0 1 1-1z" id="icons/photos/uploads/import@1x-path-1-1-37752" fill="#000"></path></g></g></g></g><!-- Filename: sourceSvg/addressbook/import.svg --></svg>
-  <a class="unitLabel labelHover">
-    <span>Export contacts</span>
-  </a>
-</div>`;
-  function insert() {
-    const deleteDiv = document.querySelector("div.delete");
-    if (!deleteDiv) {
-      return;
-    }
-    // Create a container for the new HTML
-    const container = document.createElement("div");
-    container.innerHTML = exportHtml;
+const EXPORT_BUTTON_ID = "shutterfly-address-book-export";
+const EXPORT_CONTAINER_CLASS = "shutterfly-address-book-export-container";
 
-    // Insert the new HTML after the delete div
-    deleteDiv.parentNode.insertBefore(container, deleteDiv.nextSibling);
+function findAddContactContainer() {
+  const addContactButton = document.getElementById("addNewAddressButton");
+  return addContactButton?.closest(".addressbookContainer")
+    ? addContactButton.parentElement
+    : null;
+}
 
-    const exportButton = container.querySelector(".export");
-    exportButton.addEventListener("click", function () {
-      // Send a message to the background script
-      chrome.runtime.sendMessage({ action: "exportAddressBook" });
-      // Reload the current tab
-      window.location.reload();
-    });
+function startExport(button) {
+  if (button.getAttribute("aria-busy") === "true") {
+    return;
   }
 
-  const observer = new MutationObserver((mutations, obs) => {
-    const importDiv = document.querySelector("div.delete");
-    if (importDiv) {
-      insert();
-      obs.disconnect(); // Stop watching for changes
+  const content = button.querySelector(".sfs-button--content");
+  button.setAttribute("aria-busy", "true");
+  content.textContent = "Exporting…";
+
+  chrome.runtime.sendMessage({ action: "exportAddressBook" }, (response) => {
+    button.removeAttribute("aria-busy");
+
+    if (chrome.runtime.lastError || !response?.ok) {
+      content.textContent = "Reload address book and retry";
+      return;
     }
-  });
 
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
+    content.textContent = "Downloaded";
+    window.setTimeout(() => {
+      content.textContent = "Export contacts";
+    }, 2000);
   });
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", injectExportButton);
-} else {
-  injectExportButton();
+function createExportButton() {
+  const container = document.createElement("div");
+  container.className = `dropdown_container addContactButtonContainer ${EXPORT_CONTAINER_CLASS}`;
+
+  const button = document.createElement("button");
+  button.id = EXPORT_BUTTON_ID;
+  button.type = "button";
+  button.className = "sfs-button sfs-button--primary compact";
+  button.style.marginBottom = "0";
+  button.setAttribute("aria-label", "Export contacts as CSV");
+
+  const content = document.createElement("span");
+  content.className = "sfs-button--content";
+  content.textContent = "Export contacts";
+  button.append(content);
+  button.addEventListener("click", () => startExport(button));
+
+  container.append(button);
+  return container;
 }
+
+function syncExportButton() {
+  const addContactContainer = findAddContactContainer();
+  const exportContainer = document.querySelector(`.${EXPORT_CONTAINER_CLASS}`);
+
+  if (!addContactContainer) {
+    exportContainer?.remove();
+  } else if (!document.getElementById(EXPORT_BUTTON_ID)) {
+    addContactContainer.before(createExportButton());
+  }
+}
+
+let syncScheduled = false;
+function scheduleSync() {
+  if (syncScheduled) {
+    return;
+  }
+
+  syncScheduled = true;
+  requestAnimationFrame(() => {
+    syncScheduled = false;
+    syncExportButton();
+  });
+}
+
+new MutationObserver(scheduleSync).observe(document.documentElement, {
+  childList: true,
+  subtree: true,
+});
+scheduleSync();

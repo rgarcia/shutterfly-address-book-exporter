@@ -1,56 +1,106 @@
-const Papa = require('papaparse');
-const { flatten } = require('flat');
+const {
+  convertToCSV,
+  fetchAllContacts,
+  getReplayHeaders,
+  isAddressListUrl,
+} = require("./address-book");
 
-function convertToCSV(data) {
-  return Papa.unparse(data);
+const REQUEST_CACHE_PREFIX = "addressBookRequest:";
+
+function requestCacheKey(tabId) {
+  return `${REQUEST_CACHE_PREFIX}${tabId}`;
 }
-let isListeningForAddressBook = false;
 
-chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
-  if (request.action === 'exportAddressBook') {
-    isListeningForAddressBook = true;
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action !== "exportAddressBook") {
+    return;
   }
+
+  if (sender.tab?.id == null) {
+    sendResponse({ error: "Reload the address book and try again." });
+    return;
+  }
+
+  exportCachedAddressBook(sender.tab.id)
+    .then(() => sendResponse({ ok: true }))
+    .catch((error) => {
+      console.error("Unable to export the Shutterfly address book:", error);
+      sendResponse({ error: "Reload the address book and try again." });
+    });
+
+  return true;
 });
 
+async function downloadCSV(csvContent) {
+  const url = `data:text/csv;charset=utf-8,${encodeURIComponent(csvContent)}`;
 
-function downloadCSV(csvContent, fileName) {
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const reader = new FileReader();
-    reader.onload = function (e) {
-        chrome.downloads.download({
-            url: e.target.result,
-            filename: fileName,
-        });
+  await new Promise((resolve, reject) => {
+    let downloadId;
+    const finish = (error) => {
+      chrome.downloads.onChanged.removeListener(onChanged);
+      error ? reject(error) : resolve();
     };
-    reader.readAsDataURL(blob);
+    const onChanged = (change) => {
+      if (change.id !== downloadId || !change.state) {
+        return;
+      }
+      finish(
+        change.state.current === "complete"
+          ? null
+          : new Error(change.error?.current || "Download interrupted"),
+      );
+    };
+
+    chrome.downloads.onChanged.addListener(onChanged);
+    chrome.downloads.download(
+      { url, filename: "addressbook.csv", saveAs: false },
+      (id) => {
+        if (chrome.runtime.lastError) {
+          finish(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        downloadId = id;
+      },
+    );
+  });
+}
+
+async function exportCachedAddressBook(tabId) {
+  const key = requestCacheKey(tabId);
+  const stored = await chrome.storage.session.get(key);
+  const cachedRequest = stored[key];
+
+  if (!cachedRequest) {
+    throw new Error("No address book request has been captured");
+  }
+
+  const contacts = await fetchAllContacts(cachedRequest.url, cachedRequest.headers);
+  await downloadCSV(convertToCSV(contacts));
+}
+
+async function cacheAddressListRequest(details) {
+  if (
+    details.tabId < 0 ||
+    details.method !== "GET" ||
+    !isAddressListUrl(details.url)
+  ) {
+    return;
+  }
+
+  await chrome.storage.session.set({
+    [requestCacheKey(details.tabId)]: {
+      headers: getReplayHeaders(details.requestHeaders),
+      url: details.url,
+    },
+  });
 }
 
 chrome.webRequest.onBeforeSendHeaders.addListener(
-  function (details) {
-    if (isListeningForAddressBook && details.method === 'GET' && details.url.includes('https://api2.shutterfly.com/v1/addressbook/') && details.url.includes('/contacts?')) {
-      let headers = {};
-      for (let header of details.requestHeaders) {
-        headers[header.name] = header.value;
-      }
-      if (!headers['Authorization']) {
-        return;
-      }
-      isListeningForAddressBook = false;
-      const req = new Request(details.url, {
-        method: 'GET',
-        headers: headers,
-      });
-      fetch(req)
-      .then(response => response.json())
-      .then(data => {
-        const flattened = data.items.map(item => flatten(item, {delimiter: '.', safe: false})); 
-        const csvContent = Papa.unparse(JSON.stringify(flattened));
-        downloadCSV(csvContent, "addressbook.csv");
-      })
-      .catch(error => console.error('Error fetching address book data:', error));
-    }
+  (details) => {
+    void cacheAddressListRequest(details).catch((error) => {
+      console.error("Unable to cache the Shutterfly address book request:", error);
+    });
   },
-  { urls: ["https://api2.shutterfly.com/v1/addressbook/*"] },
-  ["requestHeaders"]
+  { urls: ["https://accounts-api3.shutterfly.com/accounts/v3/account/*"] },
+  ["requestHeaders", "extraHeaders"],
 );
-

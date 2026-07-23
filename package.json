@@ -1,13 +1,13 @@
 {
   "name": "shutterfly-address-book-exporter",
-  "version": "1.0.0",
+  "version": "1.3.0",
   "scripts": {
-    "build": "npx webpack"
+    "build": "webpack",
+    "test": "node --test"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "flat": "^6.0.1",
     "papaparse": "^5.4.1"
   },
   "devDependencies": {

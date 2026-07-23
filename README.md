@@ -4,7 +4,7 @@ Chrome extension that adds an export button to your Shutterfly address book.
 
 ## Usage
 
-Install the extension and navigate to [https://www.shutterfly.com/addressbook/management.sfly#/contacts](https://www.shutterfly.com/addressbook/management.sfly#/contacts). You should see an export button. Click it.
+Install the extension and navigate to [https://accounts.shutterfly.com/account-settings#addressbook](https://accounts.shutterfly.com/account-settings#addressbook). You should see an **Export contacts** button beside **Add contact**. Click it to download `addressbook.csv`.
 
 ## Developing
 
